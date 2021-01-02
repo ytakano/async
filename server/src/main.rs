@@ -12,5 +12,6 @@ fn main() {
         let mut buf = String::new();
         reader.read_line(&mut buf).unwrap();
         writer.write(buf.as_bytes()).unwrap();
+        writer.flush().unwrap();
     }
 }
