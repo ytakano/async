@@ -60,6 +60,21 @@ impl ArcWake for Task {
     }
 }
 
+struct Spawner {
+    sender: SyncSender<Arc<Task>>,
+}
+
+impl Spawner {
+    fn spawn(&self, future: impl Future<Output = ()> + 'static + Send) {
+        let future = future.boxed();
+        let task = Arc::new(Task {
+            future: Mutex::new(future),
+            sender: self.sender.clone(),
+        });
+        self.sender.send(task).unwrap();
+    }
+}
+
 struct Executer {
     sender: SyncSender<Arc<Task>>,
     receiver: Receiver<Arc<Task>>,
@@ -69,18 +84,15 @@ impl Executer {
     fn new() -> Executer {
         let (sender, receiver) = sync_channel(1024);
         Executer {
-            sender: sender,
+            sender: sender.clone(),
             receiver: receiver,
         }
     }
 
-    fn spawn(&self, future: impl Future<Output = ()> + 'static + Send) {
-        let future = future.boxed();
-        let task = Arc::new(Task {
-            future: Mutex::new(future),
+    fn get_spawner(&self) -> Spawner {
+        Spawner {
             sender: self.sender.clone(),
-        });
-        self.sender.send(task).unwrap();
+        }
     }
 
     fn run(&self) {
@@ -95,6 +107,6 @@ impl Executer {
 
 fn main() {
     let executer = Executer::new();
-    executer.spawn(Hello::new());
+    executer.get_spawner().spawn(Hello::new());
     executer.run();
 }
