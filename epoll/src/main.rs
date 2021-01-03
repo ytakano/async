@@ -4,7 +4,7 @@ use nix::sys::epoll::{
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::TcpListener;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 
 fn main() {
     let epoll_in = EpollFlags::EPOLLIN;
@@ -38,15 +38,15 @@ fn main() {
                     epoll_ctl(epfd, epoll_add, fd, &mut ev).unwrap();
                 }
             } else {
-                let fd = events[n].data();
-                let (reader, writer) = fd2buf.get_mut(&(fd as i32)).unwrap();
+                let fd = events[n].data() as RawFd;
+                let (reader, writer) = fd2buf.get_mut(&fd).unwrap();
 
                 let mut buf = String::new();
                 let n = reader.read_line(&mut buf).unwrap();
                 if n == 0 {
                     let mut ev = EpollEvent::new(epoll_in, fd as u64);
-                    epoll_ctl(epfd, epoll_del, fd as i32, &mut ev).unwrap();
-                    fd2buf.remove(&(fd as i32));
+                    epoll_ctl(epfd, epoll_del, fd, &mut ev).unwrap();
+                    fd2buf.remove(&fd);
                     println!("closed: fd = {}", fd);
                     continue;
                 }

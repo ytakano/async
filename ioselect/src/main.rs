@@ -202,24 +202,26 @@ impl IOSelecter {
         let epoll_add = EpollOp::EpollCtlAdd;
 
         let mut ev = EpollEvent::new(epoll_in, self.event as u64);
-        epoll_ctl(self.epfd, epoll_add, self.event as i32, &mut ev).unwrap();
+        epoll_ctl(self.epfd, epoll_add, self.event, &mut ev).unwrap();
 
         let mut events = vec![EpollEvent::empty(); 1024];
         while let Ok(nfds) = epoll_wait(self.epfd, &mut events, -1) {
             let mut t = self.wakers.lock().unwrap();
             for n in 0..nfds {
-                let data = events[n].data();
-                if data as i32 != self.event {
-                    let waker = t.remove(&(data as i32)).unwrap();
-                    waker.wake_by_ref();
-                }
-            }
-
-            let mut q = self.queue.lock().unwrap();
-            while let Some(op) = q.pop_front() {
-                match op {
-                    IOOps::ADD(flag, fd, waker) => self.add_event(flag, fd, waker, &mut t),
-                    IOOps::REMOVE(fd) => self.rm_event(fd, &mut t),
+                if n == self.event as usize {
+                    let mut q = self.queue.lock().unwrap();
+                    while let Some(op) = q.pop_front() {
+                        match op {
+                            IOOps::ADD(flag, fd, waker) => self.add_event(flag, fd, waker, &mut t),
+                            IOOps::REMOVE(fd) => self.rm_event(fd, &mut t),
+                        }
+                    }
+                } else {
+                    let data = events[n].data() as i32;
+                    if data != self.event {
+                        let waker = t.remove(&data).unwrap();
+                        waker.wake_by_ref();
+                    }
                 }
             }
         }
@@ -307,11 +309,11 @@ fn main() {
 
             spwaner.spawn(async move {
                 while let Some(buf) = reader.read_line().await {
-                    print!("read: addr = {}, buf = {}", addr, buf);
+                    print!("read, {}:, buf = {}", addr, buf);
                     writer.write(buf.as_bytes()).unwrap();
                     writer.flush().unwrap();
                 }
-                println!("closed: addr ={}", addr);
+                println!("closed, {}", addr);
             });
         }
     };
