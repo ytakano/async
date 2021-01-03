@@ -90,13 +90,17 @@ impl<'a> Future for Accept<'a> {
                     addr,
                 ))
             }
-            Err(_) => {
-                self.listener.selecter.register(
-                    EpollFlags::EPOLLIN,
-                    self.listener.listener.as_raw_fd(),
-                    cx.waker().clone(),
-                );
-                Poll::Pending
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::WouldBlock {
+                    self.listener.selecter.register(
+                        EpollFlags::EPOLLIN,
+                        self.listener.listener.as_raw_fd(),
+                        cx.waker().clone(),
+                    );
+                    Poll::Pending
+                } else {
+                    panic!("accept: {}", err);
+                }
             }
         }
     }
@@ -208,7 +212,7 @@ impl IOSelecter {
         while let Ok(nfds) = epoll_wait(self.epfd, &mut events, -1) {
             let mut t = self.wakers.lock().unwrap();
             for n in 0..nfds {
-                if n == self.event as usize {
+                if events[n].data() == self.event as u64 {
                     let mut q = self.queue.lock().unwrap();
                     while let Some(op) = q.pop_front() {
                         match op {
@@ -306,14 +310,15 @@ fn main() {
         let listener = AsyncListener::listen("127.0.0.1:10000", selecter.clone());
         loop {
             let (mut reader, mut writer, addr) = listener.accept().await;
+            println!("accept: {}", addr);
 
             spwaner.spawn(async move {
                 while let Some(buf) = reader.read_line().await {
-                    print!("read, {}:, buf = {}", addr, buf);
+                    print!("read: {}, {}", addr, buf);
                     writer.write(buf.as_bytes()).unwrap();
                     writer.flush().unwrap();
                 }
-                println!("closed, {}", addr);
+                println!("close: {}", addr);
             });
         }
     };
