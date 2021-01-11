@@ -39,7 +39,7 @@ impl<'a> Future for ReadLine<'a> {
             Ok(_) => Poll::Ready(Some(line)),
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::WouldBlock {
-                    self.reader.selecter.register(
+                    self.reader.selector.register(
                         EpollFlags::EPOLLIN,
                         self.reader.fd,
                         cx.waker().clone(),
@@ -56,16 +56,16 @@ impl<'a> Future for ReadLine<'a> {
 struct AsyncReader {
     fd: RawFd,
     reader: BufReader<TcpStream>,
-    selecter: Arc<IOSelecter>,
+    selector: Arc<IOSelector>,
 }
 
 impl AsyncReader {
-    fn new(stream: TcpStream, selecter: Arc<IOSelecter>) -> AsyncReader {
+    fn new(stream: TcpStream, selector: Arc<IOSelector>) -> AsyncReader {
         stream.set_nonblocking(true).unwrap();
         AsyncReader {
             fd: stream.as_raw_fd(),
             reader: BufReader::new(stream),
-            selecter: selecter,
+            selector: selector,
         }
     }
 
@@ -85,14 +85,14 @@ impl<'a> Future for Accept<'a> {
             Ok((stream, addr)) => {
                 let stream0 = stream.try_clone().unwrap();
                 Poll::Ready((
-                    AsyncReader::new(stream0, self.listener.selecter.clone()),
+                    AsyncReader::new(stream0, self.listener.selector.clone()),
                     BufWriter::new(stream),
                     addr,
                 ))
             }
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::WouldBlock {
-                    self.listener.selecter.register(
+                    self.listener.selector.register(
                         EpollFlags::EPOLLIN,
                         self.listener.listener.as_raw_fd(),
                         cx.waker().clone(),
@@ -108,16 +108,16 @@ impl<'a> Future for Accept<'a> {
 
 struct AsyncListener {
     listener: TcpListener,
-    selecter: Arc<IOSelecter>,
+    selector: Arc<IOSelector>,
 }
 
 impl AsyncListener {
-    fn listen(addr: &str, selecter: Arc<IOSelecter>) -> AsyncListener {
+    fn listen(addr: &str, selector: Arc<IOSelector>) -> AsyncListener {
         let listener = TcpListener::bind(addr).unwrap();
         listener.set_nonblocking(true).unwrap();
         AsyncListener {
             listener: listener,
-            selecter: selecter,
+            selector: selector,
         }
     }
 
@@ -128,7 +128,7 @@ impl AsyncListener {
 
 impl Drop for AsyncListener {
     fn drop(&mut self) {
-        self.selecter.unregister(self.listener.as_raw_fd());
+        self.selector.unregister(self.listener.as_raw_fd());
     }
 }
 
@@ -143,16 +143,16 @@ enum IOOps {
     REMOVE(RawFd),
 }
 
-struct IOSelecter {
+struct IOSelector {
     wakers: Mutex<HashMap<RawFd, Waker>>,
     queue: Mutex<VecDeque<IOOps>>,
     epfd: RawFd,
     event: RawFd,
 }
 
-impl IOSelecter {
-    fn new() -> Arc<IOSelecter> {
-        let s = IOSelecter {
+impl IOSelector {
+    fn new() -> Arc<IOSelector> {
+        let s = IOSelector {
             wakers: Mutex::new(HashMap::new()),
             queue: Mutex::new(VecDeque::new()),
             epfd: epoll_create1(EpollCreateFlags::empty()).unwrap(),
@@ -222,10 +222,8 @@ impl IOSelecter {
                     }
                 } else {
                     let data = events[n].data() as i32;
-                    if data != self.event {
-                        let waker = t.remove(&data).unwrap();
-                        waker.wake_by_ref();
-                    }
+                    let waker = t.remove(&data).unwrap();
+                    waker.wake_by_ref();
                 }
             }
         }
@@ -296,18 +294,18 @@ impl Executer {
             let mut future = task.future.lock().unwrap();
             let waker = waker_ref(&task);
             let mut ctx = Context::from_waker(&waker);
-            if future.as_mut().poll(&mut ctx) == Poll::Pending {};
+            let _ = future.as_mut().poll(&mut ctx);
         }
     }
 }
 
 fn main() {
     let executer = Executer::new();
-    let selecter = IOSelecter::new();
+    let selector = IOSelector::new();
     let spwaner = executer.get_spawner();
 
     let server = async move {
-        let listener = AsyncListener::listen("127.0.0.1:10000", selecter.clone());
+        let listener = AsyncListener::listen("127.0.0.1:10000", selector.clone());
         loop {
             let (mut reader, mut writer, addr) = listener.accept().await;
             println!("accept: {}", addr);

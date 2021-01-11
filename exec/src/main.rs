@@ -41,9 +41,7 @@ impl Future for Hello {
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
-            StateHello::END => {
-                return Poll::Ready(());
-            }
+            StateHello::END => return Poll::Ready(()),
         }
     }
 }
@@ -100,13 +98,17 @@ impl Executer {
             let mut future = task.future.lock().unwrap();
             let waker = waker_ref(&task);
             let mut ctx = Context::from_waker(&waker);
-            if future.as_mut().poll(&mut ctx) == Poll::Pending {};
+            let _ = future.as_mut().poll(&mut ctx);
         }
     }
 }
 
 fn main() {
     let executer = Executer::new();
-    executer.get_spawner().spawn(Hello::new());
+    //executer.get_spawner().spawn(Hello::new());
+    executer.get_spawner().spawn(async {
+        let h = Hello::new();
+        h.await;
+    });
     executer.run();
 }
