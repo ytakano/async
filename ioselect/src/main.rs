@@ -74,6 +74,12 @@ impl AsyncReader {
     }
 }
 
+impl Drop for AsyncReader {
+    fn drop(&mut self) {
+        self.selecter.unregister(self.fd);
+    }
+}
+
 struct Accept<'a> {
     listener: &'a AsyncListener,
 }
